@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"  # Use edition 2021 resolver as recommended in warning
+members = [
+    "swift_bindings",
+    "error",
+    "types",
+    "config",
+    "distance",
+    # Add other workspace members as needed
+]
+
+[workspace.dependencies]
+# Dependencies for swift_bindings
+anyhow = "1.0"
+thiserror = "1.0"
+libc = "0.2"
+chrono = "0.4"
+
+# Common dependencies that might be used across the workspace
+http = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+
+# Dependencies required by error crate
+tonic = "0.10"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+validator = { version = "0.18", features = ["derive"] }
+
+# Dependencies required by types crate
+prost = "0.12"
+prost-types = "0.12"
+roaring = "0.10"
+generic-array = "0.14.7"  # Pin to version compatible with Rust 1.81.0
+uuid = { version = "1.4", features = ["v4", "serde"] }
+pyo3 = { version = "0.20", features = ["extension-module"] }
+regex = "1.9"
+utoipa = "3.5"
+proptest = "1.2"
+proptest-derive = "0.4"
+
+# Dependencies required by config crate
+async-trait = "0.1"
+parking_lot = "0.12"
+figment = "0.10"
+
+# Extra deps for chroma-distance dev features
+criterion = "0.5"
+rand = "0.8"
+
+# Internal workspace dependencies
+chroma-error = { path = "error" }
+chroma-types = { path = "types" }
+chroma-config = { path = "config" }

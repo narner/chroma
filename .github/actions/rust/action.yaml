@@ -1,0 +1,45 @@
+name: Setup Rust
+description: "This action sets up Rust"
+inputs:
+  github-token:
+    description: "GitHub token"
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      shell: bash
+      # (reads from rust-toolchain.toml)
+      run: |
+        rustup --version
+        rustup toolchain install
+    # Needed for sccache to work on Windows
+    - name: Set default toolchain to rust-toolchain.toml on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Read the file content as a single string
+        $toolchainToml = Get-Content .\rust-toolchain.toml -Raw
+
+        # Use regex to match the line 'channel = "<something>"'
+        if ($toolchainToml -match 'channel\s*=\s*"([^"]+)"') {
+          $channel = $matches[1]
+          Write-Host "Setting Rust default channel to: $channel"
+          rustup default $channel
+        } else {
+          Write-Error "Could not parse 'channel' from rust-toolchain.toml"
+          exit 1
+        }
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v2
+      with:
+        repo-token: ${{ inputs.github-token }}
+    - name: Use sccache
+      uses: mozilla-actions/sccache-action@v0.0.9
+    - name: Enable sccache
+      shell: bash
+      run: |
+        echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+        echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+    - name: Setup Nextest
+      uses: taiki-e/install-action@nextest
