@@ -1,4 +1,0 @@
-module chroma_swift_bindingsFFI {
-    header "chroma_swift_bindingsFFI.h"
-    export *
-}

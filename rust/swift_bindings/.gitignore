@@ -1,0 +1,11 @@
+# Ignore Swift build directory
+.build/
+.swiftpm/
+
+# Swift frameworks
+*.framework
+*.xcframework
+**/Chroma/ChromaFFI.xcframework/
+
+# macOS files
+.DS_Store
