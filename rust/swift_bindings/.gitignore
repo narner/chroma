@@ -7,5 +7,10 @@
 *.xcframework
 **/Chroma/ChromaFFI.xcframework/
 
+# Xcode user data
+xcuserdata/
+*.xcuserdatad/
+**/xcschemes/xcschememanagement.plist
+
 # macOS files
 .DS_Store
