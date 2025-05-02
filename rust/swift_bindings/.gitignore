@@ -11,6 +11,8 @@
 xcuserdata/
 *.xcuserdatad/
 **/xcschemes/xcschememanagement.plist
+*.xcuserstate
+**/UserInterfaceState.xcuserstate
 
 # macOS files
 .DS_Store
