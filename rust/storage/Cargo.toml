@@ -8,10 +8,10 @@ path = "src/lib.rs"
 
 [dependencies]
 bytes = "1.8.0"
-aws-sdk-s3 = "1.63"
-aws-smithy-types = "1.2"
-aws-config = { version = "1.5", features = ["behavior-version-latest"] }
-object_store = { version = "0.11", features = ["aws"] }
+aws-sdk-s3 = { version = "1.63", optional = true }
+aws-smithy-types = { version = "1.2", optional = true }
+aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
+object_store = { version = "0.11", features = ["aws"], optional = true }
 
 async-trait = { workspace = true }
 futures = { workspace = true }
@@ -19,7 +19,7 @@ parking_lot = { workspace = true }
 rand = { workspace = true}
 serde = { workspace = true }
 tempfile = { workspace = true }
-thiserror.workspace = true
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
@@ -29,3 +29,11 @@ chroma-error = { workspace = true }
 
 [dev-dependencies]
 rand_xorshift = { workspace = true }
+
+[features]
+default = ["s3", "object-store"]
+s3 = ["aws-sdk-s3", "aws-smithy-types", "aws-config"]
+object-store = ["object_store"]
+local = []
+# Enable bindgen to help with cross-compilation
+bindgen = []

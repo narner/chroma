@@ -1,3 +1,4 @@
+#[cfg(feature = "s3")]
 use aws_sdk_s3::primitives::ByteStream as AWSS3ByteStream;
 use futures::stream::Stream;
 use std::io::Read;
@@ -104,16 +105,19 @@ impl ByteStream for tokio::fs::File {
     }
 }
 
+#[cfg(feature = "s3")]
 pub struct S3ByteStream {
     inner: AWSS3ByteStream,
 }
 
+#[cfg(feature = "s3")]
 impl S3ByteStream {
     pub fn new(body: AWSS3ByteStream) -> Self {
         S3ByteStream { inner: body }
     }
 }
 
+#[cfg(feature = "s3")]
 impl Stream for S3ByteStream {
     type Item = ByteStreamItem;
 

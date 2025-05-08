@@ -746,6 +746,50 @@ public func addEmbeddingsBatch(jsonPayload: String) -> Bool  {
 })
 }
 /**
+ * Add a document to a persistent collection
+ *
+ * - Parameters:
+ * - collection_name: Name of the collection to add the document to
+ * - document_id: Unique ID for the document
+ * - content: Content of the document
+ * - embedding: Vector embedding for the document (if nil, dummy embedding is used)
+ * - metadata_json: Optional JSON string with document metadata
+ *
+ * - Returns: true if document was added successfully, false otherwise
+ */
+public func addPersistentDocument(collectionName: String, documentId: String, content: String, embedding: [Float]?, metadataJson: String?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_add_persistent_document(
+        FfiConverterString.lower(collectionName),
+        FfiConverterString.lower(documentId),
+        FfiConverterString.lower(content),
+        FfiConverterOptionSequenceFloat.lower(embedding),
+        FfiConverterOptionString.lower(metadataJson),$0
+    )
+})
+}
+/**
+ * Add embeddings to a collection in persistent storage.
+ *
+ * - Parameters:
+ * - collection_name: Name of the collection to add embeddings to
+ * - ids: Vector of unique IDs for each embedding
+ * - embeddings: Vectors of embeddings (float vectors)
+ * - metadatas: Optional JSON strings with metadata for each vector
+ *
+ * - Returns: Number of embeddings successfully added, or -1 on error
+ */
+public func addPersistentEmbeddings(collectionName: String, ids: [String], embeddings: [[Float]], metadatas: [String]?) -> Int32  {
+    return try!  FfiConverterInt32.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_add_persistent_embeddings(
+        FfiConverterString.lower(collectionName),
+        FfiConverterSequenceString.lower(ids),
+        FfiConverterSequenceSequenceFloat.lower(embeddings),
+        FfiConverterOptionSequenceString.lower(metadatas),$0
+    )
+})
+}
+/**
  * Calculates the centroid (mean embedding) of all vectors in a collection.
  */
 public func centroid(collectionName: String) -> [Float]  {
@@ -763,6 +807,17 @@ public func centroid(collectionName: String) -> [Float]  {
 public func chromaVersion() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_chroma_version($0
+    )
+})
+}
+/**
+ * Close and cleanup persistent storage.
+ *
+ * Returns true if successful, false otherwise.
+ */
+public func closePersistentStorage() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_close_persistent_storage($0
     )
 })
 }
@@ -818,11 +873,34 @@ public func countDocuments(collectionName: String) -> UInt32  {
 })
 }
 /**
- * Create a new collection with the specified name and metadata
+ * Count the number of documents in a persistent collection. Returns 0 if the collection does not exist.
+ */
+public func countPersistentDocuments(collectionName: String) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_count_persistent_documents(
+        FfiConverterString.lower(collectionName),$0
+    )
+})
+}
+/**
+ * Create a new collection with the specified name and metadata (in-memory)
  */
 public func createCollection(name: String, metadataJson: String?) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_create_collection(
+        FfiConverterString.lower(name),
+        FfiConverterOptionString.lower(metadataJson),$0
+    )
+})
+}
+/**
+ * Create a new collection in persistent storage with the specified name and metadata.
+ *
+ * Returns true if successful, false otherwise.
+ */
+public func createPersistentCollection(name: String, metadataJson: String?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_create_persistent_collection(
         FfiConverterString.lower(name),
         FfiConverterOptionString.lower(metadataJson),$0
     )
@@ -902,6 +980,18 @@ public func getEmbedding(collectionName: String, documentId: String) -> [Float] 
 })
 }
 /**
+ * Get metadata for a collection in persistent storage.
+ *
+ * Returns the metadata as a JSON string, or "{}" if none or if an error occurs.
+ */
+public func getPersistentCollectionMetadata(name: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_get_persistent_collection_metadata(
+        FfiConverterString.lower(name),$0
+    )
+})
+}
+/**
  * Computes the Hamming distance (number of differing bits) between two byte arrays.
  */
 public func hammingDistance(a: Data, b: Data) -> UInt32  {
@@ -935,6 +1025,19 @@ public func heartbeatTimestampNanos() -> UInt64  {
 })
 }
 /**
+ * Initialize persistent storage at the specified path.
+ *
+ * This must be called before using any persistent storage functions.
+ * Returns true if successful, false otherwise.
+ */
+public func initPersistentStorage(path: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_init_persistent_storage(
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+/**
  * Calculates `1 − (inner product)` between two vectors.
  */
 public func innerProductDistance(a: [Float], b: [Float]) -> Float  {
@@ -953,6 +1056,17 @@ public func innerProductSimilarity(a: [Float], b: [Float]) -> Float  {
     uniffi_chroma_swift_bindings_fn_func_inner_product_similarity(
         FfiConverterSequenceFloat.lower(a),
         FfiConverterSequenceFloat.lower(b),$0
+    )
+})
+}
+/**
+ * Check if persistent storage is initialized.
+ *
+ * Returns true if persistent storage is initialized, false otherwise.
+ */
+public func isPersistentStorageInitialized() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_is_persistent_storage_initialized($0
     )
 })
 }
@@ -1020,6 +1134,29 @@ public func normalizeVector(v: [Float]) -> [Float]  {
 })
 }
 /**
+ * Check if a collection exists in persistent storage.
+ *
+ * Returns true if the collection exists, false otherwise.
+ */
+public func persistentCollectionExists(name: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_persistent_collection_exists(
+        FfiConverterString.lower(name),$0
+    )
+})
+}
+/**
+ * Check if a document exists in a persistent collection.
+ */
+public func persistentDocumentExists(collectionName: String, documentId: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_persistent_document_exists(
+        FfiConverterString.lower(collectionName),
+        FfiConverterString.lower(documentId),$0
+    )
+})
+}
+/**
  * Query for nearest vectors in a collection
  *
  * - Parameters:
@@ -1041,6 +1178,29 @@ public func queryCollection(collectionName: String, queryEmbedding: [Float], nRe
 })
 }
 /**
+ * Query for nearest embeddings in a persistent collection
+ *
+ * - Parameters:
+ * - collection_name: Name of the collection to query
+ * - query_embedding: Vector to find nearest neighbors of
+ * - n_results: Maximum number of results to return
+ * - include_metadata: Whether to include metadata in the results
+ *
+ * - Returns: JSON string containing results {ids: [], embeddings: [], distances: [], metadatas: []}
+ *
+ * This function searches the persistent storage collection for nearest neighbors to the query embedding.
+ */
+public func queryPersistentCollection(collectionName: String, queryEmbedding: [Float], nResults: UInt32, includeMetadata: Bool) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_chroma_swift_bindings_fn_func_query_persistent_collection(
+        FfiConverterString.lower(collectionName),
+        FfiConverterSequenceFloat.lower(queryEmbedding),
+        FfiConverterUInt32.lower(nResults),
+        FfiConverterBool.lower(includeMetadata),$0
+    )
+})
+}
+/**
  * Generates a pseudo-random vector of length `len` using a simple LCG (no extra deps).
  */
 public func randomVector(len: UInt32) -> [Float]  {
@@ -1051,7 +1211,7 @@ public func randomVector(len: UInt32) -> [Float]  {
 })
 }
 /**
- * Reset the Chroma database (in-memory).
+ * Reset the in-memory Chroma database.
  *
  * WARNING: This is destructive and will clear all data.
  */
@@ -1149,10 +1309,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_add_embeddings_batch() != 60476) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_chroma_swift_bindings_checksum_func_add_persistent_document() != 63615) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_add_persistent_embeddings() != 32320) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_chroma_swift_bindings_checksum_func_centroid() != 334) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_chroma_version() != 20030) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_close_persistent_storage() != 51809) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_collection_exists() != 10504) {
@@ -1170,7 +1339,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_count_documents() != 28850) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_create_collection() != 2015) {
+    if (uniffi_chroma_swift_bindings_checksum_func_count_persistent_documents() != 41142) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_create_collection() != 60311) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_create_persistent_collection() != 58413) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_current_time_millis() != 27660) {
@@ -1194,6 +1369,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_get_embedding() != 6564) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_chroma_swift_bindings_checksum_func_get_persistent_collection_metadata() != 1815) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_chroma_swift_bindings_checksum_func_hamming_distance() != 3661) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1203,10 +1381,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_heartbeat_timestamp_nanos() != 7334) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_chroma_swift_bindings_checksum_func_init_persistent_storage() != 27442) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_chroma_swift_bindings_checksum_func_inner_product_distance() != 49148) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_inner_product_similarity() != 65244) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_is_persistent_storage_initialized() != 18988) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_l2_distance() != 15438) {
@@ -1227,13 +1411,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_normalize_vector() != 60501) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_chroma_swift_bindings_checksum_func_persistent_collection_exists() != 28303) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_persistent_document_exists() != 956) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_chroma_swift_bindings_checksum_func_query_collection() != 7058) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_chroma_swift_bindings_checksum_func_query_persistent_collection() != 43283) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_random_vector() != 58047) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_reset_database() != 49104) {
+    if (uniffi_chroma_swift_bindings_checksum_func_reset_database() != 20465) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_save_database() != 42072) {

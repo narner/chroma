@@ -7,6 +7,7 @@ members = [
     "config",
     "distance",
     # Add other workspace members as needed
+    "storage",
 ]
 
 [workspace.dependencies]
@@ -21,6 +22,10 @@ http = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tempfile = "3.2"
+tokio-util = { version = "0.7", features = ["full"] }
+tracing = "0.1"
 
 # Dependencies required by error crate
 tonic = "0.10"
@@ -39,10 +44,11 @@ utoipa = "3.5"
 proptest = "1.2"
 proptest-derive = "0.4"
 
-# Dependencies required by config crate
+# Dependencies required by config crate and storage crate
 async-trait = "0.1"
 parking_lot = "0.12"
 figment = "0.10"
+rand_xorshift = "0.3"
 
 # Extra deps for chroma-distance dev features
 criterion = "0.5"

@@ -1,22 +1,36 @@
 use std::sync::Arc;
 
 use self::config::StorageConfig;
-use admissioncontrolleds3::StorageRequestPriority;
 use async_trait::async_trait;
 use chroma_config::{registry::Registry, Configurable};
 use chroma_error::{ChromaError, ErrorCodes};
 
-pub mod admissioncontrolleds3;
+#[cfg(feature = "s3")]
+use admissioncontrolleds3::StorageRequestPriority;
+
+#[cfg(not(feature = "s3"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StorageRequestPriority {
+    #[default]
+    P0,
+}
+
 pub mod config;
 pub mod local;
-pub mod object_store;
-pub mod s3;
 pub mod stream;
 use local::LocalStorage;
 use tempfile::TempDir;
 use thiserror::Error;
 
+#[cfg(feature = "s3")]
+pub mod s3;
+#[cfg(feature = "s3")]
+pub mod admissioncontrolleds3;
+#[cfg(feature = "s3")]
 pub use s3::s3_client_for_test_with_new_bucket;
+
+#[cfg(feature = "object-store")]
+pub mod object_store;
 
 /// A StorageError captures all kinds of errors that can come from storage.
 //
@@ -193,9 +207,12 @@ pub enum StorageConfigError {
 
 #[derive(Clone)]
 pub enum Storage {
-    ObjectStore(object_store::ObjectStore),
-    S3(s3::S3Storage),
     Local(local::LocalStorage),
+    #[cfg(feature = "object-store")]
+    ObjectStore(object_store::ObjectStore),
+    #[cfg(feature = "s3")]
+    S3(s3::S3Storage),
+    #[cfg(feature = "s3")]
     AdmissionControlledS3(admissioncontrolleds3::AdmissionControlledS3Storage),
 }
 
@@ -211,9 +228,12 @@ impl ChromaError for StorageConfigError {
 impl Storage {
     pub async fn get(&self, key: &str, options: GetOptions) -> Result<Arc<Vec<u8>>, StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => Ok(object_store.get(key).await?),
-            Storage::S3(s3) => s3.get(key).await,
             Storage::Local(local) => local.get(key).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => Ok(object_store.get(key).await?),
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.get(key).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(admission_controlled_storage) => {
                 admission_controlled_storage.get(key, options).await
             }
@@ -226,9 +246,12 @@ impl Storage {
         options: GetOptions,
     ) -> Result<(Arc<Vec<u8>>, Option<ETag>), StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.get_with_e_tag(key).await,
-            Storage::S3(s3) => s3.get_with_e_tag(key).await,
             Storage::Local(local) => local.get_with_e_tag(key).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.get_with_e_tag(key).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.get_with_e_tag(key).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(admission_controlled_storage) => {
                 admission_controlled_storage
                     .get_with_e_tag(key, options)
@@ -243,9 +266,12 @@ impl Storage {
         options: GetOptions,
     ) -> Result<Arc<Vec<u8>>, StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.get_parallel(key).await,
-            Storage::S3(s3) => s3.get_parallel(key).await.map(|res| res.0),
             Storage::Local(local) => local.get(key).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.get_parallel(key).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.get_parallel(key).await.map(|res| res.0),
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(admission_controlled_storage) => {
                 admission_controlled_storage
                     .get_parallel(key.to_string(), options)
@@ -261,10 +287,17 @@ impl Storage {
         options: PutOptions,
     ) -> Result<Option<ETag>, StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.put_file(key, path, options).await,
-            Storage::S3(s3) => s3.put_file(key, path, options).await,
             Storage::Local(local) => local.put_file(key, path, options).await,
-            Storage::AdmissionControlledS3(as3) => as3.put_file(key, path, options).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.put_file(key, path, options).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.put_file(key, path, options).await,
+            #[cfg(feature = "s3")]
+            Storage::AdmissionControlledS3(admission_controlled_storage) => {
+                admission_controlled_storage
+                    .put_file(key, path, options)
+                    .await
+            }
         }
     }
 
@@ -275,27 +308,36 @@ impl Storage {
         options: PutOptions,
     ) -> Result<Option<ETag>, StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.put_bytes(key, bytes, options).await,
-            Storage::S3(s3) => s3.put_bytes(key, bytes, options).await,
             Storage::Local(local) => local.put_bytes(key, &bytes, options).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.put_bytes(key, bytes, options).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.put_bytes(key, bytes, options).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(as3) => as3.put_bytes(key, bytes, options).await,
         }
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.delete(key).await,
-            Storage::S3(s3) => s3.delete(key).await,
             Storage::Local(local) => local.delete(key).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.delete(key).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.delete(key).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(_) => Err(StorageError::NotImplemented),
         }
     }
 
     pub async fn rename(&self, src_key: &str, dst_key: &str) -> Result<(), StorageError> {
         match self {
-            Storage::ObjectStore(object_store) => object_store.rename(src_key, dst_key).await,
-            Storage::S3(s3) => s3.rename(src_key, dst_key).await,
             Storage::Local(local) => local.rename(src_key, dst_key).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.rename(src_key, dst_key).await,
+            #[cfg(feature = "s3")]
+            Storage::S3(s3) => s3.rename(src_key, dst_key).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(_) => Err(StorageError::NotImplemented),
         }
     }
@@ -303,10 +345,13 @@ impl Storage {
     pub async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>, StorageError> {
         match self {
             Storage::Local(local) => local.list_prefix(prefix).await,
+            #[cfg(feature = "object-store")]
+            Storage::ObjectStore(object_store) => object_store.list_prefix(prefix).await,
+            #[cfg(feature = "s3")]
             Storage::S3(_) => {
                 unimplemented!("list_prefix not implemented for S3")
             }
-            Storage::ObjectStore(object_store) => object_store.list_prefix(prefix).await,
+            #[cfg(feature = "s3")]
             Storage::AdmissionControlledS3(_) => {
                 unimplemented!("list_prefix not implemented for AdmissionControlledS3")
             }
@@ -321,21 +366,34 @@ impl Configurable<StorageConfig> for Storage {
         registry: &Registry,
     ) -> Result<Self, Box<dyn ChromaError>> {
         match &config {
+            #[cfg(feature = "object-store")]
             StorageConfig::ObjectStore(config) => Ok(Storage::ObjectStore(
                 object_store::ObjectStore::try_from_config(config).await?,
             )),
+            #[cfg(not(feature = "object-store"))]
+            StorageConfig::ObjectStore(_) => Err(Box::new(StorageError::NotImplemented)),
+            
+            #[cfg(feature = "s3")]
             StorageConfig::S3(_) => Ok(Storage::S3(
                 s3::S3Storage::try_from_config(config, registry).await?,
             )),
-            StorageConfig::Local(_) => Ok(Storage::Local(
-                local::LocalStorage::try_from_config(config, registry).await?,
-            )),
+            #[cfg(not(feature = "s3"))]
+            StorageConfig::S3(_) => Err(Box::new(StorageError::NotImplemented)),
+            
+            StorageConfig::Local(_) => {
+                let local = LocalStorage::try_from_config(config, registry).await?;
+                Ok(Storage::Local(local))
+            },
+            
+            #[cfg(feature = "s3")]
             StorageConfig::AdmissionControlledS3(_) => Ok(Storage::AdmissionControlledS3(
                 admissioncontrolleds3::AdmissionControlledS3Storage::try_from_config(
                     config, registry,
                 )
                 .await?,
             )),
+            #[cfg(not(feature = "s3"))]
+            StorageConfig::AdmissionControlledS3(_) => Err(Box::new(StorageError::NotImplemented)),
         }
     }
 }

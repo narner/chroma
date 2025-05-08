@@ -5,6 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
+use std::path::Path;
 use anyhow::Result;
 use thiserror::Error;
 use tokio::runtime::Runtime;
@@ -12,15 +13,24 @@ use serde::{Serialize, Deserialize};
 
 // Chroma core imports
 use chroma_types::HeartbeatError;
+use chroma_storage::{Storage, GetOptions, PutOptions, ETag, StorageRequestPriority};
+use chroma_storage::local::LocalStorage;
 
 // For simple in-memory storage
 use std::sync::{Arc, Mutex};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
+// Global runtime for asynchronous operations
+lazy_static! {
+    static ref RUNTIME: Runtime = Runtime::new().unwrap();
+}
+
 // Simplified in-memory database for Swift integration demo
 lazy_static! {
     static ref COLLECTIONS: Mutex<HashMap<String, Collection>> = Mutex::new(HashMap::new());
+    // Global instance for persistent storage
+    static ref PERSISTENT_STORAGE: Mutex<Option<Storage>> = Mutex::new(None);
 }
 
 // Simple Collection type for demonstration
@@ -49,6 +59,15 @@ pub enum ChromaSwiftError {
     
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),
+    
+    #[error("Storage error: {0}")]
+    StorageError(std::io::Error),
+
+    #[error("Persistent storage not initialized")]
+    StorageNotInitialized,
+    
+    #[error("Invalid storage path: {0}")]
+    InvalidStoragePath(String),
 }
 
 /// Internal implementation of the heartbeat function.
@@ -135,22 +154,503 @@ pub fn heartbeat_timestamp_nanos() -> u64 {
     heartbeat_internal().unwrap_or(0) as u64
 }
 
-/// Reset the Chroma database (in-memory).
+/// Reset the in-memory Chroma database.
 /// 
 /// WARNING: This is destructive and will clear all data.
 #[uniffi::export]
 pub fn reset_database() -> bool {
-    // Clear all collections from our simplified database
-    match COLLECTIONS.lock() {
-        Ok(mut collections) => {
-            collections.clear();
-            true
+    let mut collections = COLLECTIONS.lock().unwrap();
+    collections.clear();
+    true
+}
+
+/// Initialize persistent storage at the specified path.
+/// 
+/// This must be called before using any persistent storage functions.
+/// Returns true if successful, false otherwise.
+#[uniffi::export]
+pub fn init_persistent_storage(path: String) -> bool {
+    // Validate path
+    if path.is_empty() {
+        return false;
+    }
+    
+    // Create directory if it doesn't exist
+    if let Err(_) = std::fs::create_dir_all(&path) {
+        return false;
+    }
+    
+    // Initialize Chroma's LocalStorage
+    let local_storage = LocalStorage::new(&path);
+    
+    // Create Storage enum with Local variant
+    let storage = Storage::Local(local_storage);
+    
+    // Set the global instance
+    let mut persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    *persistent_storage = Some(storage);
+    
+    true
+}
+
+/// Check if persistent storage is initialized.
+/// 
+/// Returns true if persistent storage is initialized, false otherwise.
+#[uniffi::export]
+pub fn is_persistent_storage_initialized() -> bool {
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    persistent_storage.is_some()
+}
+
+/// Close and cleanup persistent storage.
+/// 
+/// Returns true if successful, false otherwise.
+#[uniffi::export]
+pub fn close_persistent_storage() -> bool {
+    let mut persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    *persistent_storage = None;
+    true
+}
+
+/// Create a new collection in persistent storage with the specified name and metadata.
+/// 
+/// Returns true if successful, false otherwise.
+#[uniffi::export]
+pub fn create_persistent_collection(name: String, metadata_json: Option<String>) -> bool {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return false, // Storage not initialized
+    };
+    
+    // Parse metadata from JSON if provided
+    let metadata = match metadata_json {
+        Some(json) => match serde_json::from_str::<HashMap<String, String>>(&json) {
+            Ok(map) => Some(map),
+            Err(_) => return false, // Invalid JSON format
         },
-        Err(_) => false,
+        None => None,
+    };
+    
+    // Collections in persistent storage are managed through files - we can create a simple marker file
+    // to indicate a collection exists with its metadata
+    let collection_path = format!("collections/{}/metadata.json", name);
+    let metadata_content = serde_json::to_string(&metadata).unwrap_or_else(|_| String::from("{}"));
+    
+    // Use the storage to save the metadata file
+    let result = RUNTIME.block_on(async {
+        storage.put_bytes(
+            &collection_path,
+            metadata_content.as_bytes().to_vec(),
+            PutOptions::with_priority(StorageRequestPriority::P0)
+        ).await
+    });
+    
+    result.is_ok()
+}
+
+/// Check if a collection exists in persistent storage.
+/// 
+/// Returns true if the collection exists, false otherwise.
+#[uniffi::export]
+pub fn persistent_collection_exists(name: String) -> bool {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return false, // Storage not initialized
+    };
+    
+    // Check if the collection metadata file exists
+    let collection_path = format!("collections/{}/metadata.json", name);
+    
+    // Use Chroma storage to check if file exists
+    let result = RUNTIME.block_on(async {
+        storage.get(&collection_path, GetOptions::default()).await
+    });
+    
+    result.is_ok()
+}
+
+/// Get metadata for a collection in persistent storage.
+/// 
+/// Returns the metadata as a JSON string, or "{}" if none or if an error occurs.
+#[uniffi::export]
+pub fn get_persistent_collection_metadata(name: String) -> String {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return "{}".to_string(), // Storage not initialized
+    };
+    
+    // Get the collection metadata file
+    let collection_path = format!("collections/{}/metadata.json", name);
+    
+    let result = RUNTIME.block_on(async {
+        storage.get(&collection_path, GetOptions::default()).await
+    });
+    
+    match result {
+        Ok(data) => {
+            String::from_utf8((*data).clone()).unwrap_or_else(|_| String::from("{}"))
+        },
+        Err(_) => String::from("{}"),
     }
 }
 
-/// Create a new collection with the specified name and metadata
+/// Add embeddings to a collection in persistent storage.
+/// 
+/// - Parameters:
+///   - collection_name: Name of the collection to add embeddings to
+///   - ids: Vector of unique IDs for each embedding
+///   - embeddings: Vectors of embeddings (float vectors)
+///   - metadatas: Optional JSON strings with metadata for each vector
+/// 
+/// - Returns: Number of embeddings successfully added, or -1 on error
+#[uniffi::export]
+pub fn add_persistent_embeddings(
+    collection_name: String,
+    ids: Vec<String>,
+    embeddings: Vec<Vec<f32>>,
+    metadatas: Option<Vec<String>>
+) -> i32 {
+    // Validate inputs
+    if ids.len() != embeddings.len() {
+        return -1; // Mismatched lengths
+    }
+    if let Some(ref meta) = metadatas {
+        if meta.len() != ids.len() {
+            return -1; // Mismatched metadata length
+        }
+    }
+    
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return -1, // Storage not initialized
+    };
+    
+    // Check if collection exists
+    if !persistent_collection_exists(collection_name.clone()) {
+        return -1; // Collection doesn't exist
+    }
+    
+    // Process each embedding and save to storage
+    let mut success_count = 0;
+    
+    for i in 0..ids.len() {
+        let id = &ids[i];
+        let embedding = &embeddings[i];
+        
+        // Parse metadata if provided
+        let metadata_str = match &metadatas {
+            Some(meta_vec) if i < meta_vec.len() => meta_vec[i].clone(),
+            _ => String::from("{}"),
+        };
+        
+        // Save embedding vector
+        let embedding_path = format!("collections/{}/embeddings/{}.json", collection_name, id);
+        let embedding_json = serde_json::to_string(embedding).unwrap_or_default();
+        
+        // Save metadata for this embedding
+        let metadata_path = format!("collections/{}/metadata/{}.json", collection_name, id);
+        
+        // Perform storage operations
+        let embedding_result = RUNTIME.block_on(async {
+            storage.put_bytes(
+                &embedding_path,
+                embedding_json.as_bytes().to_vec(),
+                PutOptions::with_priority(StorageRequestPriority::P0)
+            ).await
+        });
+        
+        let metadata_result = RUNTIME.block_on(async {
+            storage.put_bytes(
+                &metadata_path,
+                metadata_str.as_bytes().to_vec(),
+                PutOptions::with_priority(StorageRequestPriority::P0)
+            ).await
+        });
+        
+        if embedding_result.is_ok() && metadata_result.is_ok() {
+            success_count += 1;
+        }
+    }
+    
+    success_count
+}
+
+/// Query for nearest embeddings in a persistent collection
+/// 
+/// - Parameters:
+///   - collection_name: Name of the collection to query
+///   - query_embedding: Vector to find nearest neighbors of
+///   - n_results: Maximum number of results to return
+///   - include_metadata: Whether to include metadata in the results
+/// 
+/// - Returns: JSON string containing results {ids: [], embeddings: [], distances: [], metadatas: []}
+/// 
+/// This function searches the persistent storage collection for nearest neighbors to the query embedding.
+#[uniffi::export]
+pub fn query_persistent_collection(
+    collection_name: String,
+    query_embedding: Vec<f32>,
+    n_results: u32,
+    include_metadata: bool
+) -> String {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return json_error("Storage not initialized"), // Storage not initialized
+    };
+    
+    // Check if collection exists
+    if !persistent_collection_exists(collection_name.clone()) {
+        return json_error("Collection not found");
+    }
+    
+    // List all embeddings in the collection
+    let embeddings_prefix = format!("collections/{}/embeddings/", collection_name);
+    
+    let embedding_keys = RUNTIME.block_on(async {
+        storage.list_prefix(&embeddings_prefix).await
+    });
+    
+    let embedding_keys = match embedding_keys {
+        Ok(keys) => keys,
+        Err(_) => return json_error("Failed to list embeddings"),
+    };
+    
+    // Load all embeddings for comparison
+    let mut embeddings: Vec<(String, Vec<f32>)> = Vec::new();
+    
+    for key in embedding_keys {
+        // Extract ID from the key path
+        let id = match Path::new(&key).file_name() {
+            Some(name) => name.to_string_lossy().trim_end_matches(".json").to_string(),
+            None => continue,
+        };
+        
+        // Load the embedding
+        let embedding_data = RUNTIME.block_on(async {
+            storage.get(&key, GetOptions::default()).await
+        });
+        
+        let embedding_data = match embedding_data {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+        
+        // Parse the embedding vector
+        let embedding_str = match String::from_utf8((*embedding_data).clone()) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        
+        let embedding: Vec<f32> = match serde_json::from_str(&embedding_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        
+        embeddings.push((id, embedding));
+    }
+    
+    // Calculate distances and sort results
+    let mut results: Vec<(String, Vec<f32>, f32)> = Vec::new();
+    
+    for (id, embedding) in embeddings {
+        if embedding.len() != query_embedding.len() {
+            continue; // Skip vectors with different dimensions
+        }
+        
+        // Calculate L2 distance
+        let distance = l2_distance(query_embedding.clone(), embedding.clone());
+        results.push((id, embedding, distance));
+    }
+    
+    // Sort by distance (ascending)
+    results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    
+    // Limit to n_results
+    let n = std::cmp::min(n_results as usize, results.len());
+    results.truncate(n);
+    
+    // Format results as JSON
+    let mut ids = Vec::new();
+    let mut embeddings_out = Vec::new();
+    let mut distances = Vec::new();
+    let mut metadatas = Vec::new();
+    
+    for (id, embedding, distance) in results {
+        ids.push(id.clone());
+        embeddings_out.push(embedding);
+        distances.push(distance);
+        
+        if include_metadata {
+            // Check if the metadata file exists
+            let metadata_path = format!("collections/{}/metadata.json", collection_name);
+            let metadata_result = RUNTIME.block_on(async {
+                storage.get(&metadata_path, GetOptions::default()).await
+            });
+            
+            let metadata_str = match metadata_result {
+                Ok(data) => String::from_utf8((*data).clone()).unwrap_or_else(|_| String::from("{}")),
+                Err(_) => String::from("{}"),
+            };
+            
+            metadatas.push(metadata_str);
+        }
+    }
+    
+    // Build result JSON
+    let mut result = serde_json::Map::new();
+    result.insert("ids".to_string(), serde_json::to_value(ids).unwrap());
+    result.insert("embeddings".to_string(), serde_json::to_value(embeddings_out).unwrap());
+    result.insert("distances".to_string(), serde_json::to_value(distances).unwrap());
+    
+    if include_metadata {
+        result.insert("metadatas".to_string(), serde_json::to_value(metadatas).unwrap());
+    }
+    
+    serde_json::to_string(&result).unwrap_or_else(|_| json_error("Failed to serialize result"))
+}
+
+/// Add a document to a persistent collection
+/// 
+/// - Parameters:
+///   - collection_name: Name of the collection to add the document to
+///   - document_id: Unique ID for the document
+///   - content: Content of the document
+///   - embedding: Vector embedding for the document (if nil, dummy embedding is used)
+///   - metadata_json: Optional JSON string with document metadata
+/// 
+/// - Returns: true if document was added successfully, false otherwise
+#[uniffi::export]
+pub fn add_persistent_document(
+    collection_name: String,
+    document_id: String,
+    content: String,
+    embedding: Option<Vec<f32>>,
+    metadata_json: Option<String>
+) -> bool {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return false, // Storage not initialized
+    };
+    
+    // Check if collection exists
+    if !persistent_collection_exists(collection_name.clone()) {
+        return false; // Collection doesn't exist
+    }
+    
+    // Use provided embedding or generate a random one of dimension 384 (default OpenAI size)
+    let doc_embedding = match embedding {
+        Some(e) => e,
+        None => {
+            // Generate a dummy random embedding (384 dimensions)
+            random_vector(384)
+        },
+    };
+    
+    // Prepare document content
+    let doc_content_path = format!("collections/{}/documents/{}.txt", collection_name, document_id);
+    
+    // Save document embedding
+    let embedding_path = format!("collections/{}/embeddings/{}.json", collection_name, document_id);
+    let embedding_json = serde_json::to_string(&doc_embedding).unwrap_or_default();
+    
+    // Save document metadata if provided
+    let metadata_str = metadata_json.unwrap_or_else(|| String::from("{}"));
+    let metadata_path = format!("collections/{}/metadata/{}.json", collection_name, document_id);
+    
+    // Perform storage operations
+    let content_result = RUNTIME.block_on(async {
+        storage.put_bytes(
+            &doc_content_path,
+            content.as_bytes().to_vec(),
+            PutOptions::with_priority(StorageRequestPriority::P0)
+        ).await
+    });
+    
+    let embedding_result = RUNTIME.block_on(async {
+        storage.put_bytes(
+            &embedding_path,
+            embedding_json.as_bytes().to_vec(),
+            PutOptions::with_priority(StorageRequestPriority::P0)
+        ).await
+    });
+    
+    let metadata_result = RUNTIME.block_on(async {
+        storage.put_bytes(
+            &metadata_path,
+            metadata_str.as_bytes().to_vec(),
+            PutOptions::with_priority(StorageRequestPriority::P0)
+        ).await
+    });
+    
+    content_result.is_ok() && embedding_result.is_ok() && metadata_result.is_ok()
+}
+
+/// Check if a document exists in a persistent collection.
+#[uniffi::export]
+pub fn persistent_document_exists(collection_name: String, document_id: String) -> bool {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return false, // Storage not initialized
+    };
+    
+    // Check if collection exists
+    if !persistent_collection_exists(collection_name.clone()) {
+        return false; // Collection doesn't exist
+    }
+    
+    // Check if document content exists
+    let doc_content_path = format!("collections/{}/documents/{}.txt", collection_name, document_id);
+    
+    let result = RUNTIME.block_on(async {
+        storage.get(&doc_content_path, GetOptions::default()).await
+    });
+    
+    result.is_ok()
+}
+
+/// Count the number of documents in a persistent collection. Returns 0 if the collection does not exist.
+#[uniffi::export]
+pub fn count_persistent_documents(collection_name: String) -> u32 {
+    // Check if persistent storage is initialized
+    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    let storage = match &*persistent_storage {
+        Some(storage) => storage,
+        None => return 0, // Storage not initialized
+    };
+    
+    // Check if collection exists
+    if !persistent_collection_exists(collection_name.clone()) {
+        return 0; // Collection doesn't exist
+    }
+    
+    // List all documents in the collection
+    let documents_prefix = format!("collections/{}/documents/", collection_name);
+    
+    let document_keys = RUNTIME.block_on(async {
+        storage.list_prefix(&documents_prefix).await
+    });
+    
+    match document_keys {
+        Ok(keys) => keys.len() as u32,
+        Err(_) => 0,
+    }
+}
+
+/// Create a new collection with the specified name and metadata (in-memory)
 #[uniffi::export]
 pub fn create_collection(name: String, metadata_json: Option<String>) -> bool {
     // Parse metadata JSON if provided
