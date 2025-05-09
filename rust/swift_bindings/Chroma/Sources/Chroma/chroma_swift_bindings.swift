@@ -1277,6 +1277,8 @@ public func zeroVector(len: UInt32) -> [Float]  {
 })
 }
 
+
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
