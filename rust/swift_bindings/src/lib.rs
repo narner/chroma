@@ -167,78 +167,121 @@ pub fn reset_database() -> bool {
 /// Initialize persistent storage at the specified path.
 /// 
 /// This must be called before using any persistent storage functions.
-/// Returns true if successful, false otherwise.
+/// Returns 1 if successful, 0 otherwise (i8 for proper FFI conversion to Swift Bool).
 #[uniffi::export]
-pub fn init_persistent_storage(path: String) -> bool {
+pub fn init_persistent_storage(path: String) -> i8 {
+    println!("[DEBUG] init_persistent_storage: Called with path: {}", path);
+    
+    let result = try_init_storage(path);
+    
+    println!("[DEBUG] init_persistent_storage: Returning {:?}", result);
+    if result { 1 } else { 0 }
+}
+
+// Helper function that does the actual initialization work and returns a bool
+fn try_init_storage(path: String) -> bool {
     // Validate path
     if path.is_empty() {
+        println!("[DEBUG] init_persistent_storage: Path is empty, returning false");
         return false;
     }
+    
+    println!("[DEBUG] init_persistent_storage: Path validation successful");
     
     // Create directory if it doesn't exist
-    if let Err(_) = std::fs::create_dir_all(&path) {
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        println!("[DEBUG] init_persistent_storage: Failed to create directory: {}", e);
         return false;
     }
     
+    println!("[DEBUG] init_persistent_storage: Directory created or already exists");
+    
     // Initialize Chroma's LocalStorage
+    println!("[DEBUG] init_persistent_storage: Initializing LocalStorage...");
     let local_storage = LocalStorage::new(&path);
+    println!("[DEBUG] init_persistent_storage: LocalStorage initialized successfully");
     
     // Create Storage enum with Local variant
+    println!("[DEBUG] init_persistent_storage: Creating Storage enum...");
     let storage = Storage::Local(local_storage);
+    println!("[DEBUG] init_persistent_storage: Storage enum created successfully");
     
     // Set the global instance
+    println!("[DEBUG] init_persistent_storage: Acquiring lock on PERSISTENT_STORAGE...");
     let mut persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
+    println!("[DEBUG] init_persistent_storage: Setting global storage instance...");
     *persistent_storage = Some(storage);
+    println!("[DEBUG] init_persistent_storage: Global storage instance set successfully");
     
+    println!("[DEBUG] init_persistent_storage: Returning true (success)");
     true
 }
 
 /// Check if persistent storage is initialized.
 /// 
-/// Returns true if persistent storage is initialized, false otherwise.
+/// Returns 1 if persistent storage is initialized, 0 otherwise.
 #[uniffi::export]
-pub fn is_persistent_storage_initialized() -> bool {
+pub fn is_persistent_storage_initialized() -> i8 {
+    println!("[DEBUG] is_persistent_storage_initialized: Called");
     let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
-    persistent_storage.is_some()
+    let result = persistent_storage.is_some();
+    println!("[DEBUG] is_persistent_storage_initialized: Returning {:?}", result);
+    if result { 1 } else { 0 }
 }
 
 /// Close and cleanup persistent storage.
 /// 
-/// Returns true if successful, false otherwise.
+/// Returns 1 if successful, 0 otherwise.
 #[uniffi::export]
-pub fn close_persistent_storage() -> bool {
+pub fn close_persistent_storage() -> i8 {
+    println!("[DEBUG] close_persistent_storage: Called");
     let mut persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
     *persistent_storage = None;
-    true
+    println!("[DEBUG] close_persistent_storage: Storage closed successfully");
+    1 // Always returns success (1)
 }
 
 /// Create a new collection in persistent storage with the specified name and metadata.
 /// 
-/// Returns true if successful, false otherwise.
+/// Returns 1 if successful, 0 otherwise.
 #[uniffi::export]
-pub fn create_persistent_collection(name: String, metadata_json: Option<String>) -> bool {
+pub fn create_persistent_collection(name: String, metadata_json: Option<String>) -> i8 {
+    println!("[DEBUG] create_persistent_collection: Called with name: {}", name);
+    
     // Check if persistent storage is initialized
     let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
     let storage = match &*persistent_storage {
         Some(storage) => storage,
-        None => return false, // Storage not initialized
+        None => {
+            println!("[DEBUG] create_persistent_collection: Storage not initialized, returning 0");
+            return 0; // Storage not initialized
+        }
     };
     
     // Parse metadata from JSON if provided
-    let metadata = match metadata_json {
-        Some(json) => match serde_json::from_str::<HashMap<String, String>>(&json) {
-            Ok(map) => Some(map),
-            Err(_) => return false, // Invalid JSON format
-        },
-        None => None,
-    };
+    let metadata = metadata_json
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
     
-    // Collections in persistent storage are managed through files - we can create a simple marker file
-    // to indicate a collection exists with its metadata
+    println!("[DEBUG] create_persistent_collection: Metadata parsed successfully");
+    
+    // Prepare the collection path
     let collection_path = format!("collections/{}/metadata.json", name);
+    
+    // Create parent directory if it doesn't exist
+    let parent_dir = format!("collections/{}", name);
+    println!("[DEBUG] create_persistent_collection: Creating parent directory: {}", parent_dir);
+    let result = std::fs::create_dir_all(parent_dir);
+    if result.is_err() {
+        println!("[DEBUG] create_persistent_collection: Failed to create parent directory, returning 0");
+        return 0;
+    }
+    
+    // Convert metadata to a serialized JSON string
     let metadata_content = serde_json::to_string(&metadata).unwrap_or_else(|_| String::from("{}"));
     
     // Use the storage to save the metadata file
+    println!("[DEBUG] create_persistent_collection: Saving metadata to: {}", collection_path);
     let result = RUNTIME.block_on(async {
         storage.put_bytes(
             &collection_path,
@@ -247,30 +290,39 @@ pub fn create_persistent_collection(name: String, metadata_json: Option<String>)
         ).await
     });
     
-    result.is_ok()
+    let success = result.is_ok();
+    println!("[DEBUG] create_persistent_collection: Operation result: {:?}, returning {}", success, if success { 1 } else { 0 });
+    if success { 1 } else { 0 }
 }
 
 /// Check if a collection exists in persistent storage.
 /// 
-/// Returns true if the collection exists, false otherwise.
+/// Returns 1 if the collection exists, 0 otherwise.
 #[uniffi::export]
-pub fn persistent_collection_exists(name: String) -> bool {
+pub fn persistent_collection_exists(collection_name: String) -> i8 {
+    println!("[DEBUG] persistent_collection_exists: Called for collection: {}", collection_name);
+    
     // Check if persistent storage is initialized
     let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
     let storage = match &*persistent_storage {
         Some(storage) => storage,
-        None => return false, // Storage not initialized
+        None => {
+            println!("[DEBUG] persistent_collection_exists: Storage not initialized, returning 0");
+            return 0; // Storage not initialized
+        }
     };
     
-    // Check if the collection metadata file exists
-    let collection_path = format!("collections/{}/metadata.json", name);
+    // Check if the metadata file exists
+    let metadata_path = format!("collections/{}/metadata.json", collection_name);
+    println!("[DEBUG] persistent_collection_exists: Checking for metadata at: {}", metadata_path);
     
-    // Use Chroma storage to check if file exists
-    let result = RUNTIME.block_on(async {
-        storage.get(&collection_path, GetOptions::default()).await
+    let metadata_result = RUNTIME.block_on(async {
+        storage.get(&metadata_path, GetOptions::default()).await
     });
     
-    result.is_ok()
+    let exists = metadata_result.is_ok();
+    println!("[DEBUG] persistent_collection_exists: Collection exists: {}, returning {}", exists, if exists { 1 } else { 0 });
+    if exists { 1 } else { 0 }
 }
 
 /// Get metadata for a collection in persistent storage.
@@ -333,8 +385,9 @@ pub fn add_persistent_embeddings(
         None => return -1, // Storage not initialized
     };
     
-    // Check if collection exists
-    if !persistent_collection_exists(collection_name.clone()) {
+    // Check if collection exists - using helper function
+    if !try_collection_exists(collection_name.clone(), &storage) {
+        println!("[DEBUG] add_embeddings_to_persistent_collection: Collection doesn't exist, returning -1");
         return -1; // Collection doesn't exist
     }
     
@@ -408,8 +461,9 @@ pub fn query_persistent_collection(
         None => return json_error("Storage not initialized"), // Storage not initialized
     };
     
-    // Check if collection exists
-    if !persistent_collection_exists(collection_name.clone()) {
+    // Check if collection exists - using helper function
+    if !try_collection_exists(collection_name.clone(), &storage) {
+        println!("[DEBUG] query_persistent_collection: Collection doesn't exist, returning error");
         return json_error("Collection not found");
     }
     
@@ -521,38 +575,41 @@ pub fn query_persistent_collection(
 
 /// Add a document to a persistent collection
 /// 
-/// - Parameters:
-///   - collection_name: Name of the collection to add the document to
-///   - document_id: Unique ID for the document
-///   - content: Content of the document
-///   - embedding: Vector embedding for the document (if nil, dummy embedding is used)
-///   - metadata_json: Optional JSON string with document metadata
-/// 
-/// - Returns: true if document was added successfully, false otherwise
 #[uniffi::export]
 pub fn add_persistent_document(
     collection_name: String,
     document_id: String,
     content: String,
     embedding: Option<Vec<f32>>,
-    metadata_json: Option<String>
-) -> bool {
+    metadata_json: Option<String>,
+) -> i8 {
+    println!("[DEBUG] add_persistent_document: Called for collection: {}, document: {}", collection_name, document_id);
+    
     // Check if persistent storage is initialized
     let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
     let storage = match &*persistent_storage {
         Some(storage) => storage,
-        None => return false, // Storage not initialized
+        None => {
+            println!("[DEBUG] add_persistent_document: Storage not initialized, returning 0");
+            return 0; // Storage not initialized
+        }
     };
     
     // Check if collection exists
-    if !persistent_collection_exists(collection_name.clone()) {
-        return false; // Collection doesn't exist
+    let collection_exists = try_collection_exists(collection_name.clone(), &storage);
+    if !collection_exists {
+        println!("[DEBUG] add_persistent_document: Collection doesn't exist, returning 0");
+        return 0; // Collection doesn't exist
     }
     
     // Use provided embedding or generate a random one of dimension 384 (default OpenAI size)
     let doc_embedding = match embedding {
-        Some(e) => e,
+        Some(e) => {
+            println!("[DEBUG] add_persistent_document: Using provided embedding of dimension {}", e.len());
+            e
+        },
         None => {
+            println!("[DEBUG] add_persistent_document: Generating random embedding of dimension 384");
             // Generate a dummy random embedding (384 dimensions)
             random_vector(384)
         },
@@ -560,16 +617,32 @@ pub fn add_persistent_document(
     
     // Prepare document content
     let doc_content_path = format!("collections/{}/documents/{}.txt", collection_name, document_id);
+    println!("[DEBUG] add_persistent_document: Preparing document at: {}", doc_content_path);
     
     // Save document embedding
     let embedding_path = format!("collections/{}/embeddings/{}.json", collection_name, document_id);
     let embedding_json = serde_json::to_string(&doc_embedding).unwrap_or_default();
+    println!("[DEBUG] add_persistent_document: Saving embedding at: {}", embedding_path);
     
     // Save document metadata if provided
     let metadata_str = metadata_json.unwrap_or_else(|| String::from("{}"));
     let metadata_path = format!("collections/{}/metadata/{}.json", collection_name, document_id);
+    println!("[DEBUG] add_persistent_document: Saving metadata at: {}", metadata_path);
+    
+    // Create necessary directories
+    for dir in [
+        format!("collections/{}/documents", collection_name),
+        format!("collections/{}/embeddings", collection_name),
+        format!("collections/{}/metadata", collection_name)
+    ] {
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            println!("[DEBUG] add_persistent_document: Failed to create directory {}: {}", dir, e);
+            return 0;
+        }
+    }
     
     // Perform storage operations
+    println!("[DEBUG] add_persistent_document: Storing document content");
     let content_result = RUNTIME.block_on(async {
         storage.put_bytes(
             &doc_content_path,
@@ -578,6 +651,7 @@ pub fn add_persistent_document(
         ).await
     });
     
+    println!("[DEBUG] add_persistent_document: Storing embedding");
     let embedding_result = RUNTIME.block_on(async {
         storage.put_bytes(
             &embedding_path,
@@ -586,6 +660,7 @@ pub fn add_persistent_document(
         ).await
     });
     
+    println!("[DEBUG] add_persistent_document: Storing metadata");
     let metadata_result = RUNTIME.block_on(async {
         storage.put_bytes(
             &metadata_path,
@@ -594,63 +669,61 @@ pub fn add_persistent_document(
         ).await
     });
     
-    content_result.is_ok() && embedding_result.is_ok() && metadata_result.is_ok()
+    let success = content_result.is_ok() && embedding_result.is_ok() && metadata_result.is_ok();
+    println!("[DEBUG] add_persistent_document: Operation result: {:?}, returning {}", 
+             success, if success { 1 } else { 0 });
+    if success { 1 } else { 0 }
 }
 
-/// Check if a document exists in a persistent collection.
+// ... (rest of the code remains the same)
 #[uniffi::export]
-pub fn persistent_document_exists(collection_name: String, document_id: String) -> bool {
+pub fn persistent_document_exists(collection_name: String, document_id: String) -> i8 {
+    println!("[DEBUG] persistent_document_exists: Called for collection: {}, document: {}", collection_name, document_id);
+    
     // Check if persistent storage is initialized
     let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
     let storage = match &*persistent_storage {
         Some(storage) => storage,
-        None => return false, // Storage not initialized
+        None => {
+            println!("[DEBUG] persistent_document_exists: Storage not initialized, returning 0");
+            return 0; // Storage not initialized
+        }
     };
     
-    // Check if collection exists
-    if !persistent_collection_exists(collection_name.clone()) {
-        return false; // Collection doesn't exist
+    // Check if collection exists - note: we need to adapt the function call for the i8 return type
+    let collection_exists = try_collection_exists(collection_name.clone(), &storage);
+    if !collection_exists {
+        println!("[DEBUG] persistent_document_exists: Collection doesn't exist, returning 0");
+        return 0; // Collection doesn't exist
     }
     
     // Check if document content exists
     let doc_content_path = format!("collections/{}/documents/{}.txt", collection_name, document_id);
+    println!("[DEBUG] persistent_document_exists: Checking for document at: {}", doc_content_path);
     
     let result = RUNTIME.block_on(async {
         storage.get(&doc_content_path, GetOptions::default()).await
     });
     
-    result.is_ok()
+    let exists = result.is_ok();
+    println!("[DEBUG] persistent_document_exists: Document exists: {}, returning {}", exists, if exists { 1 } else { 0 });
+    if exists { 1 } else { 0 }
 }
 
-/// Count the number of documents in a persistent collection. Returns 0 if the collection does not exist.
-#[uniffi::export]
-pub fn count_persistent_documents(collection_name: String) -> u32 {
-    // Check if persistent storage is initialized
-    let persistent_storage = PERSISTENT_STORAGE.lock().unwrap();
-    let storage = match &*persistent_storage {
-        Some(storage) => storage,
-        None => return 0, // Storage not initialized
-    };
+// Helper function that checks if a collection exists (returns bool)
+fn try_collection_exists(collection_name: String, storage: &Storage) -> bool {
+    // Check if the metadata file exists
+    let metadata_path = format!("collections/{}/metadata.json", collection_name);
     
-    // Check if collection exists
-    if !persistent_collection_exists(collection_name.clone()) {
-        return 0; // Collection doesn't exist
-    }
-    
-    // List all documents in the collection
-    let documents_prefix = format!("collections/{}/documents/", collection_name);
-    
-    let document_keys = RUNTIME.block_on(async {
-        storage.list_prefix(&documents_prefix).await
+    let metadata_result = RUNTIME.block_on(async {
+        storage.get(&metadata_path, GetOptions::default()).await
     });
     
-    match document_keys {
-        Ok(keys) => keys.len() as u32,
-        Err(_) => 0,
-    }
+    // Return true if the metadata exists, false otherwise
+    let exists = metadata_result.is_ok();
+    println!("[DEBUG] try_collection_exists: Collection {} exists: {}", collection_name, exists);
+    exists
 }
-
-/// Create a new collection with the specified name and metadata (in-memory)
 #[uniffi::export]
 pub fn create_collection(name: String, metadata_json: Option<String>) -> bool {
     // Parse metadata JSON if provided

@@ -8,7 +8,6 @@
 import SwiftUI
 import Chroma
 
-// ADD: Function to list collections
 func listCollections(_ collections: [String]) -> String {
     var results: [String] = []
     
@@ -38,7 +37,6 @@ func listCollections(_ collections: [String]) -> String {
     return "Active Collections:\n" + results.joined(separator: "\n")
 }
 
-// ADD: Function to return formatted document results
 func formatQueryResults(_ jsonString: String) -> String {
     guard let data = jsonString.data(using: .utf8) else {
         return "Invalid JSON format"
@@ -66,33 +64,28 @@ func formatQueryResults(_ jsonString: String) -> String {
     }
 }
 
-// ADD: Safe array access extension
 extension Array {
     subscript(safe index: Index) -> Element? {
         return indices.contains(index) ? self[index] : nil
     }
 }
 
-// ADD: Vector formatting helper
 func formatVector(_ vector: [Float]) -> String {
     return "[" + vector.map { String(format: "%.3f", $0) }.joined(separator: ", ") + "]"
 }
 
-// ADD: Collection metadata structure
 struct CollectionMetadata: Codable {
     let description: String?
     let dimension: Int
     let created_at: TimeInterval
 }
 
-// ADD: Better error handling for JSON parsing
 struct QueryResult: Codable {
     let ids: [String]
     let metadatas: [[String: String]]
     let embeddings: [[Float]]?
 }
 
-// ADD: Collection metadata validation
 func getCollectionMetadata(collectionName: String) -> String {
     let query = queryCollection(
         collectionName: collectionName,
@@ -120,7 +113,7 @@ struct ContentView: View {
     @State private var showAddDocument = false
     @State private var collectionsInfo = "..."
     @State private var selectedTab = 0
-    @State private var queryResults = "" // ADD: Track query results
+    @State private var queryResults = ""
     
     // MARK: - Collection management state
     @State private var collections: [String] = []
@@ -224,7 +217,7 @@ struct ContentView: View {
                 
                 QueryInterface(
                     collections: collections,
-                    queryResults: $queryResults // ADD: Pass binding
+                    queryResults: $queryResults
                 )
                 .padding()
                 
@@ -234,6 +227,13 @@ struct ContentView: View {
                 Label("Collections", systemImage: "folder")
             }
             .tag(2)
+            
+            // Persistent Storage Tab
+            PersistentStorageView()
+                .tabItem {
+                    Label("Persistent", systemImage: "externaldrive")
+                }
+                .tag(3)
         }
         .task { @MainActor in
             await runDemo()
@@ -251,7 +251,7 @@ struct ContentView: View {
                 ResetDatabaseView(onReset: {
                     collections.removeAll()
                     collectionsInfo = "..."
-                    queryResults = "" // ADD: Clear query results
+                    queryResults = ""
                 })
             }
         }
@@ -494,7 +494,7 @@ struct QueryInterface: View {
     @State private var selectedCollection = ""
     @State private var queryVector: String = "1.0, 0.0, 0.0"
     @State private var numResults: String = "5"
-    @Binding var queryResults: String // CHANGE: Use binding instead of state
+    @Binding var queryResults: String
     @State private var showingDocuments = false
 
     var body: some View {
@@ -1233,5 +1233,140 @@ struct DocumentManagementView: View {
         print("[Document Addition] Content length: \(content.count)")
         print("[Document Addition] Embedding size: \(embedding?.count ?? 0)")
         print("[Document Addition] Success: \(success)")
+    }
+}
+
+struct PersistentStorageView: View {
+    @State private var storagePath: String = {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths[0].appendingPathComponent("ChromaTest2").path
+    }()
+    @State private var isInitialized = false
+    @State private var collectionName = ""
+    @State private var documentId = ""
+    @State private var documentContent = ""
+    @State private var statusMessage = ""
+    @State private var queryResults = ""
+    
+    private func updateStatus(_ message: String, isError: Bool = false, autoHide: Bool = false) {
+        statusMessage = message
+        
+        if autoHide {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if statusMessage == message {  // Only clear if it hasn't been changed
+                    statusMessage = ""
+                }
+            }
+        }
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Storage Initialization
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Storage Configuration")
+                        .font(.headline)
+                    
+                    TextField("Storage Path", text: $storagePath)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    HStack {
+                        Button("Initialize Storage") {
+                            let success = initPersistentStorage(path: storagePath) == 1
+                            isInitialized = success
+                            updateStatus(success ? "Storage initialized" : "Failed to initialize storage")
+                        }
+                        .buttonStyle(ActionButtonStyle(backgroundColor: .blue))
+                        
+                        Button("Close Storage") {
+                            let success = closePersistentStorage() == 1
+                            isInitialized = !success
+                            updateStatus(success ? "Storage closed" : "Failed to close storage")
+                        }
+                        .buttonStyle(ActionButtonStyle(backgroundColor: .red))
+                    }
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(10)
+                
+                // Collection Management
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Collection Management")
+                        .font(.headline)
+                    
+                    TextField("Collection Name", text: $collectionName)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Button("Create Collection") {
+                        let success = createPersistentCollection(name: collectionName, metadataJson: nil) == 1
+                        updateStatus(success ? "Collection created" : "Failed to create collection")
+                    }
+                    .buttonStyle(ActionButtonStyle(backgroundColor: .green))
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(10)
+                
+                // Document Management
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Document Management")
+                        .font(.headline)
+                    
+                    TextField("Document ID", text: $documentId)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    TextEditor(text: $documentContent)
+                        .frame(height: 100)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.2))
+                        )
+                    
+                    Button("Add Document") {
+                        let success = addPersistentDocument(
+                            collectionName: collectionName,
+                            documentId: documentId,
+                            content: documentContent,
+                            embedding: nil,
+                            metadataJson: nil
+                        ) == 1
+                        updateStatus(
+                            success ? "Document added" : "Failed to add document",
+                            autoHide: success  // Only auto-hide on success
+                        )
+                    }
+                    .buttonStyle(ActionButtonStyle(backgroundColor: .blue))
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(10)
+                
+                // Query Results
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(10)
+                }
+                
+                if !queryResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Query Results")
+                            .font(.headline)
+                        
+                        Text(queryResults)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(10)
+                }
+            }
+            .padding()
+        }
     }
 }

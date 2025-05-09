@@ -400,6 +400,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt8: FfiConverterPrimitive {
+    typealias FfiType = Int8
+    typealias SwiftType = Int8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -747,18 +763,10 @@ public func addEmbeddingsBatch(jsonPayload: String) -> Bool  {
 }
 /**
  * Add a document to a persistent collection
- *
- * - Parameters:
- * - collection_name: Name of the collection to add the document to
- * - document_id: Unique ID for the document
- * - content: Content of the document
- * - embedding: Vector embedding for the document (if nil, dummy embedding is used)
- * - metadata_json: Optional JSON string with document metadata
- *
- * - Returns: true if document was added successfully, false otherwise
+
  */
-public func addPersistentDocument(collectionName: String, documentId: String, content: String, embedding: [Float]?, metadataJson: String?) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func addPersistentDocument(collectionName: String, documentId: String, content: String, embedding: [Float]?, metadataJson: String?) -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_add_persistent_document(
         FfiConverterString.lower(collectionName),
         FfiConverterString.lower(documentId),
@@ -813,10 +821,10 @@ public func chromaVersion() -> String  {
 /**
  * Close and cleanup persistent storage.
  *
- * Returns true if successful, false otherwise.
+ * Returns 1 if successful, 0 otherwise.
  */
-public func closePersistentStorage() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func closePersistentStorage() -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_close_persistent_storage($0
     )
 })
@@ -872,19 +880,6 @@ public func countDocuments(collectionName: String) -> UInt32  {
     )
 })
 }
-/**
- * Count the number of documents in a persistent collection. Returns 0 if the collection does not exist.
- */
-public func countPersistentDocuments(collectionName: String) -> UInt32  {
-    return try!  FfiConverterUInt32.lift(try! rustCall() {
-    uniffi_chroma_swift_bindings_fn_func_count_persistent_documents(
-        FfiConverterString.lower(collectionName),$0
-    )
-})
-}
-/**
- * Create a new collection with the specified name and metadata (in-memory)
- */
 public func createCollection(name: String, metadataJson: String?) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_create_collection(
@@ -896,10 +891,10 @@ public func createCollection(name: String, metadataJson: String?) -> Bool  {
 /**
  * Create a new collection in persistent storage with the specified name and metadata.
  *
- * Returns true if successful, false otherwise.
+ * Returns 1 if successful, 0 otherwise.
  */
-public func createPersistentCollection(name: String, metadataJson: String?) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func createPersistentCollection(name: String, metadataJson: String?) -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_create_persistent_collection(
         FfiConverterString.lower(name),
         FfiConverterOptionString.lower(metadataJson),$0
@@ -1028,10 +1023,10 @@ public func heartbeatTimestampNanos() -> UInt64  {
  * Initialize persistent storage at the specified path.
  *
  * This must be called before using any persistent storage functions.
- * Returns true if successful, false otherwise.
+ * Returns 1 if successful, 0 otherwise (i8 for proper FFI conversion to Swift Bool).
  */
-public func initPersistentStorage(path: String) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func initPersistentStorage(path: String) -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_init_persistent_storage(
         FfiConverterString.lower(path),$0
     )
@@ -1062,10 +1057,10 @@ public func innerProductSimilarity(a: [Float], b: [Float]) -> Float  {
 /**
  * Check if persistent storage is initialized.
  *
- * Returns true if persistent storage is initialized, false otherwise.
+ * Returns 1 if persistent storage is initialized, 0 otherwise.
  */
-public func isPersistentStorageInitialized() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func isPersistentStorageInitialized() -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_is_persistent_storage_initialized($0
     )
 })
@@ -1136,20 +1131,17 @@ public func normalizeVector(v: [Float]) -> [Float]  {
 /**
  * Check if a collection exists in persistent storage.
  *
- * Returns true if the collection exists, false otherwise.
+ * Returns 1 if the collection exists, 0 otherwise.
  */
-public func persistentCollectionExists(name: String) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func persistentCollectionExists(collectionName: String) -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_persistent_collection_exists(
-        FfiConverterString.lower(name),$0
+        FfiConverterString.lower(collectionName),$0
     )
 })
 }
-/**
- * Check if a document exists in a persistent collection.
- */
-public func persistentDocumentExists(collectionName: String, documentId: String) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+public func persistentDocumentExists(collectionName: String, documentId: String) -> Int8  {
+    return try!  FfiConverterInt8.lift(try! rustCall() {
     uniffi_chroma_swift_bindings_fn_func_persistent_document_exists(
         FfiConverterString.lower(collectionName),
         FfiConverterString.lower(documentId),$0
@@ -1309,7 +1301,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_add_embeddings_batch() != 60476) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_add_persistent_document() != 63615) {
+    if (uniffi_chroma_swift_bindings_checksum_func_add_persistent_document() != 50856) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_add_persistent_embeddings() != 32320) {
@@ -1321,7 +1313,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_chroma_version() != 20030) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_close_persistent_storage() != 51809) {
+    if (uniffi_chroma_swift_bindings_checksum_func_close_persistent_storage() != 855) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_collection_exists() != 10504) {
@@ -1339,13 +1331,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_count_documents() != 28850) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_count_persistent_documents() != 41142) {
+    if (uniffi_chroma_swift_bindings_checksum_func_create_collection() != 13571) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_create_collection() != 60311) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_chroma_swift_bindings_checksum_func_create_persistent_collection() != 58413) {
+    if (uniffi_chroma_swift_bindings_checksum_func_create_persistent_collection() != 37896) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_current_time_millis() != 27660) {
@@ -1381,7 +1370,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_heartbeat_timestamp_nanos() != 7334) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_init_persistent_storage() != 27442) {
+    if (uniffi_chroma_swift_bindings_checksum_func_init_persistent_storage() != 11340) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_inner_product_distance() != 49148) {
@@ -1390,7 +1379,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_inner_product_similarity() != 65244) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_is_persistent_storage_initialized() != 18988) {
+    if (uniffi_chroma_swift_bindings_checksum_func_is_persistent_storage_initialized() != 38031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_l2_distance() != 15438) {
@@ -1411,10 +1400,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_chroma_swift_bindings_checksum_func_normalize_vector() != 60501) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_persistent_collection_exists() != 28303) {
+    if (uniffi_chroma_swift_bindings_checksum_func_persistent_collection_exists() != 16579) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_chroma_swift_bindings_checksum_func_persistent_document_exists() != 956) {
+    if (uniffi_chroma_swift_bindings_checksum_func_persistent_document_exists() != 23143) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_chroma_swift_bindings_checksum_func_query_collection() != 7058) {

@@ -29,7 +29,10 @@ uniffi = { version = "0.29", features = ["build", "bindgen", "cli"] }
 lazy_static = "1.4.0"
 uuid = { workspace = true }
 
-# No AWS dependencies - using only local storage features
+# Logging and utility dependencies
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+log = "0.4"
 
 # Swift binding configuration
 [package.metadata.swift]
