@@ -1,10 +1,3 @@
-//
-//  ContentView.swift
-//  ChromaTest2
-//
-//  Created by Nicholas Arner on 4/29/25.
-//
-
 import SwiftUI
 import Chroma
 
@@ -1238,84 +1231,348 @@ struct DocumentManagementView: View {
 
 struct PersistentStorageView: View {
     @State private var storagePath: String = {
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        return paths[0].appendingPathComponent("ChromaTest2").path
+        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            return documentsURL.appendingPathComponent("ChromaTest2").path
+        }
+        return ""
     }()
     @State private var isInitialized = false
-    @State private var collectionName = ""
+    @State private var collectionName = "" // For selected collection
+    @State private var newCollectionName = "" // For creating new collection
     @State private var documentId = ""
     @State private var documentContent = ""
     @State private var statusMessage = ""
     @State private var queryResults = ""
+    @State private var documents: [String] = []
+    @State private var availableCollections: [String] = []
+    @State private var isLoading = false
+    
+    private func refreshDocuments() {
+        guard !collectionName.isEmpty else { return }
+        
+        isLoading = true
+        print("Refreshing documents for collection: \(collectionName)")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            let collectionsURL = URL(fileURLWithPath: storagePath)
+                .appendingPathComponent("collections")
+                .appendingPathComponent(collectionName)
+                .appendingPathComponent("documents")
+            
+            print("Checking documents at: \(collectionsURL.path)")
+            
+            do {
+                let fileURLs = try FileManager.default.contentsOfDirectory(
+                    at: collectionsURL,
+                    includingPropertiesForKeys: nil
+                )
+                
+                let documentFiles = fileURLs.filter { $0.pathExtension == "txt" }
+                print("Found document files: \(documentFiles)")
+                
+                let documentIds = documentFiles.map { $0.deletingPathExtension().lastPathComponent }
+                print("Document IDs: \(documentIds)")
+                
+                if documentIds.isEmpty {
+                    queryResults = "No documents found in '\(collectionName)'"
+                    documents = []
+                    isLoading = false
+                    return
+                }
+                
+                var formattedResults = "Documents in '\(collectionName)':\n\n"
+                for (index, id) in documentIds.enumerated() {
+                    formattedResults += "Document \(index + 1):\n"
+                    formattedResults += "  ID: \(id)\n"
+                    
+                    let contentURL = collectionsURL.appendingPathComponent("\(id).txt")
+                    if let content = try? String(contentsOf: contentURL, encoding: .utf8) {
+                        formattedResults += "  Content: \(content)\n"
+                    }
+                    
+                    let metadataURL = collectionsURL
+                        .deletingLastPathComponent()
+                        .appendingPathComponent("metadata.json")
+                    
+                    if let metadataData = try? Data(contentsOf: metadataURL),
+                       let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: Any] {
+                        if let timestamp = metadata["created_at"] as? Double {
+                            let date = Date(timeIntervalSince1970: timestamp)
+                            let formatter = DateFormatter()
+                            formatter.dateStyle = .medium
+                            formatter.timeStyle = .short
+                            formattedResults += "  Created: \(formatter.string(from: date))\n"
+                        }
+                    }
+                    
+                    formattedResults += "\n"
+                }
+                
+                documents = documentIds
+                queryResults = formattedResults
+                
+            } catch {
+                print("Error reading documents: \(error)")
+                queryResults = "Error reading documents: \(error.localizedDescription)"
+                documents = []
+            }
+            isLoading = false
+        }
+    }
     
     private func updateStatus(_ message: String, isError: Bool = false, autoHide: Bool = false) {
         statusMessage = message
         
         if autoHide {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                if statusMessage == message {  // Only clear if it hasn't been changed
+                if statusMessage == message {
                     statusMessage = ""
                 }
             }
         }
     }
     
+    private func resetFields() {
+        collectionName = ""
+        documentId = ""
+        documentContent = ""
+        queryResults = ""
+        documents = []
+        availableCollections = []
+    }
+    
+    private func detectCollections() {
+        print("Detecting collections...") // Debug print
+        
+        let collectionsURL = URL(fileURLWithPath: storagePath).appendingPathComponent("collections")
+        print("Collections URL: \(collectionsURL.path)")
+        
+        do {
+            let storageContents = try FileManager.default.contentsOfDirectory(atPath: storagePath)
+            print("Storage directory contents: \(storageContents)")
+            
+            if FileManager.default.fileExists(atPath: collectionsURL.path) {
+                let collectionContents = try FileManager.default.contentsOfDirectory(atPath: collectionsURL.path)
+                print("Collections directory contents: \(collectionContents)")
+            }
+        } catch {
+            print("Error listing directory contents: \(error)")
+        }
+        
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: collectionsURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            
+            let potentialCollections = contents
+                .filter { url in
+                    var isDirectory: ObjCBool = false
+                    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                    print("Checking path: \(url.path) - exists: \(exists), isDirectory: \(isDirectory.boolValue)")
+                    return isDirectory.boolValue
+                }
+                .map { $0.lastPathComponent }
+            
+            print("Found potential collections: \(potentialCollections)")
+            
+            availableCollections = potentialCollections.filter { name in
+                let exists = persistentCollectionExists(collectionName: name) == 1
+                print("Checking collection '\(name)': \(exists ? "valid" : "invalid")")
+                
+                let collectionPath = collectionsURL.appendingPathComponent(name)
+                let documentsPath = collectionPath.appendingPathComponent("documents")
+                let metadataPath = collectionPath.appendingPathComponent("metadata.json")
+                
+                var isDirectory: ObjCBool = false
+                let hasDocuments = FileManager.default.fileExists(atPath: documentsPath.path, isDirectory: &isDirectory)
+                let hasMetadata = FileManager.default.fileExists(atPath: metadataPath.path)
+                
+                print("""
+                    Collection '\(name)' structure:
+                    - Path: \(collectionPath.path)
+                    - Documents exists: \(hasDocuments) (isDir: \(isDirectory.boolValue))
+                    - Metadata exists: \(hasMetadata)
+                    """)
+                
+                return exists
+            }
+            
+            print("Valid collections: \(availableCollections)")
+            
+            if !availableCollections.isEmpty {
+                if collectionName.isEmpty {
+                    collectionName = availableCollections[0]
+                    refreshDocuments() // Refresh the list
+                }
+            }
+        } catch {
+            print("Error detecting collections: \(error)")
+            availableCollections = []
+        }
+    }
+    
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Storage Initialization
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Storage Configuration")
                         .font(.headline)
                     
-                    TextField("Storage Path", text: $storagePath)
-                        .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Storage Path:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Storage Path", text: $storagePath)
+                            .textFieldStyle(.roundedBorder)
+                        
+                        Text(storagePath)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
                     
-                    HStack {
+                    HStack(spacing: 12) {
                         Button("Initialize Storage") {
+                            print("Initializing storage at: \(storagePath)")
                             let success = initPersistentStorage(path: storagePath) == 1
                             isInitialized = success
                             updateStatus(success ? "Storage initialized" : "Failed to initialize storage")
+                            if success {
+                                detectCollections()
+                                if !collectionName.isEmpty {
+                                    refreshDocuments() // Refresh documents if a collection is selected
+                                }
+                            }
                         }
                         .buttonStyle(ActionButtonStyle(backgroundColor: .blue))
                         
                         Button("Close Storage") {
                             let success = closePersistentStorage() == 1
                             isInitialized = !success
-                            updateStatus(success ? "Storage closed" : "Failed to close storage")
+                            if success {
+                                resetFields()
+                                updateStatus("Storage closed")
+                            } else {
+                                updateStatus("Failed to close storage")
+                            }
                         }
                         .buttonStyle(ActionButtonStyle(backgroundColor: .red))
+                        
+                        if isInitialized {
+                            Button(action: {
+                                detectCollections()
+                                if !collectionName.isEmpty {
+                                    refreshDocuments()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text("Refresh")
+                                }
+                            }
+                            .buttonStyle(ActionButtonStyle(backgroundColor: .green))
+                        }
                     }
                 }
                 .padding()
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(10)
                 
-                // Collection Management
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Collection Management")
-                        .font(.headline)
-                    
-                    TextField("Collection Name", text: $collectionName)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    Button("Create Collection") {
-                        let success = createPersistentCollection(name: collectionName, metadataJson: nil) == 1
-                        updateStatus(success ? "Collection created" : "Failed to create collection")
+                    HStack {
+                        Text("Collection Management")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        if isInitialized {
+                            Button(action: {
+                                detectCollections()
+                                if !collectionName.isEmpty {
+                                    refreshDocuments()
+                                }
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .foregroundColor(.blue)
+                            }
+                        }
                     }
-                    .buttonStyle(ActionButtonStyle(backgroundColor: .green))
+                    
+                    if !availableCollections.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Select Collection:")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            
+                            Picker("Collection", selection: $collectionName) {
+                                Text("Select Collection").tag("")
+                                ForEach(availableCollections, id: \.self) { name in
+                                    Text(name).tag(name)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.white)
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.2))
+                            )
+                            .onChange(of: collectionName) { _, newValue in
+                                print("Collection changed to: \(newValue)")
+                                if !newValue.isEmpty {
+                                    refreshDocuments()
+                                }
+                            }
+                        }
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(availableCollections.isEmpty ? "Create First Collection:" : "Create New Collection:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Collection Name", text: $newCollectionName)
+                            .textFieldStyle(.roundedBorder)
+                        
+                        Button("Create Collection") {
+                            guard !newCollectionName.isEmpty else { return }
+                            
+                            print("Creating collection: \(newCollectionName)")
+                            let success = createPersistentCollection(name: newCollectionName, metadataJson: nil) == 1
+                            if success {
+                                availableCollections.append(newCollectionName)
+                                collectionName = newCollectionName
+                                newCollectionName = ""
+                                refreshDocuments()
+                                updateStatus("Collection created", autoHide: true)
+                            } else {
+                                updateStatus("Failed to create collection")
+                            }
+                        }
+                        .buttonStyle(ActionButtonStyle(backgroundColor: .green))
+                        .disabled(newCollectionName.isEmpty)
+                    }
                 }
                 .padding()
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(10)
                 
-                // Document Management
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Document Management")
-                        .font(.headline)
+                    HStack {
+                        Text("Document Management")
+                            .font(.headline)
+                        
+                        Spacer()
+                    }
                     
                     TextField("Document ID", text: $documentId)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(collectionName.isEmpty)
                     
                     TextEditor(text: $documentContent)
                         .frame(height: 100)
@@ -1323,8 +1580,11 @@ struct PersistentStorageView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(Color.secondary.opacity(0.2))
                         )
+                        .disabled(collectionName.isEmpty)
                     
                     Button("Add Document") {
+                        guard !collectionName.isEmpty else { return }
+                        
                         let success = addPersistentDocument(
                             collectionName: collectionName,
                             documentId: documentId,
@@ -1334,16 +1594,28 @@ struct PersistentStorageView: View {
                         ) == 1
                         updateStatus(
                             success ? "Document added" : "Failed to add document",
-                            autoHide: success  // Only auto-hide on success
+                            autoHide: success
                         )
+                        if success {
+                            documentId = ""
+                            documentContent = ""
+                            refreshDocuments()
+                        }
                     }
                     .buttonStyle(ActionButtonStyle(backgroundColor: .blue))
+                    .disabled(collectionName.isEmpty || documentId.isEmpty || documentContent.isEmpty)
                 }
                 .padding()
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(10)
+                .opacity(collectionName.isEmpty ? 0.7 : 1.0)
                 
-                // Query Results
+                documentsSection
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(10)
+                
                 if !statusMessage.isEmpty {
                     Text(statusMessage)
                         .padding()
@@ -1351,22 +1623,66 @@ struct PersistentStorageView: View {
                         .background(Color.secondary.opacity(0.1))
                         .cornerRadius(10)
                 }
-                
-                if !queryResults.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Query Results")
-                            .font(.headline)
-                        
-                        Text(queryResults)
-                            .font(.system(.body, design: .monospaced))
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(10)
-                }
             }
             .padding()
+        }
+        .onAppear {
+            print("View appeared, checking storage...") // Debug print
+            if isPersistentStorageInitialized() == 1 {
+                print("Storage is initialized") // Debug print
+                isInitialized = true
+                detectCollections()
+            } else {
+                print("Storage is not initialized") // Debug print
+            }
+        }
+        .onChange(of: isInitialized) { _, newValue in
+            print("Storage initialization changed: \(newValue)") // Debug print
+            if newValue {
+                detectCollections()
+            }
+        }
+    }
+    
+    private var documentsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Documents in Collection")
+                .font(.headline)
+            
+            if isLoading {
+                HStack {
+                    ProgressView()
+                        .padding(.trailing, 8)
+                    Text("Loading documents...")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+            } else if documents.isEmpty {
+                Text(collectionName.isEmpty ? "Select a collection to view documents" : "No documents found in '\(collectionName)'")
+                    .foregroundColor(.secondary)
+                    .padding()
+            } else {
+                Text(queryResults)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(10)
+    }
+}
+
+extension View {
+    func placeholder<Content: View>(
+        when shouldShow: Bool,
+        alignment: Alignment = .leading,
+        @ViewBuilder placeholder: () -> Content
+    ) -> some View {
+        ZStack(alignment: alignment) {
+            placeholder().opacity(shouldShow ? 1 : 0)
+            self
         }
     }
 }
